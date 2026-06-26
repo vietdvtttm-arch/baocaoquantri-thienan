@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Phần mềm Quản trị Công việc & Điều hành – Thiên Ân</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>html,body,#root{height:100%}body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:#eef1f6}.mono{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}#boot{display:flex;height:100%;align-items:center;justify-content:center;color:#64748b}</style>
+</head>
+<body>
+<div id="root"><div id="boot">Đang khởi tạo phần mềm…</div></div>
+<script type="text/babel" data-presets="react">
+
+const { useState, useEffect, useMemo, useRef } = React;
+const C={navy:"#14233f",navy2:"#1F3864",teal:"#1F7A6F",ink:"#1f2937",sub:"#64748b",line:"#e2e8f0",page:"#eef1f6"};
+const MONO={fontVariantNumeric:"tabular-nums",fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"};
+const TASK_STA={
+ "Chưa thực hiện":{c:"#4b5563",bg:"#eceae8",dot:"#9ca3af"},
+ "Đang thực hiện":{c:"#1d4ed8",bg:"#dbeafe",dot:"#3b82f6"},
+ "Hoàn thành":{c:"#15803d",bg:"#dcfce7",dot:"#22c55e"},
+ "Quá hạn":{c:"#b91c1c",bg:"#fee2e2",dot:"#ef4444"},
+ "Tạm dừng":{c:"#9a3412",bg:"#ffedd5",dot:"#f97316"}};
+const STATUSES=Object.keys(TASK_STA);
+const KSTA={"XANH":{c:"#15803d",bg:"#dcfce7",dot:"#22c55e"},"VÀNG":{c:"#b45309",bg:"#fef3c7",dot:"#f59e0b"},"ĐỎ":{c:"#b91c1c",bg:"#fee2e2",dot:"#ef4444"}};
+const EVALC={"Tốt":{c:"#15803d",bg:"#dcfce7"},"Bình thường":{c:"#b45309",bg:"#fef3c7"},"Chậm":{c:"#b91c1c",bg:"#fee2e2"},"Cần chú ý":{c:"#9a3412",bg:"#ffedd5"}};
+
+/* KPI logic */
+const statusOf=(v,g,b,d)=>!isFinite(v)?"ĐỎ":d==="high"?(v>=g?"XANH":v<=b?"ĐỎ":"VÀNG"):(v<=g?"XANH":v>=b?"ĐỎ":"VÀNG");
+const scoreOf=(v,g,b,d)=>{if(!isFinite(v))return 0;let s=d==="high"?(v-b)/(g-b)*100:(b-v)/(b-g)*100;return Math.max(0,Math.min(100,s));};
+const fmtVal=(v,f)=>{if(!isFinite(v))return"—";if(f==="pct")return v.toFixed(1)+"%";if(f==="x")return v.toFixed(2)+"×";if(f==="int")return Math.round(v).toLocaleString("vi-VN");return v.toFixed(1);};
+const fmtN=v=>isFinite(v)?Math.round(v).toLocaleString("vi-VN"):"—";
+const rollup=a=>a.includes("ĐỎ")?"ĐỎ":a.includes("VÀNG")?"VÀNG":"XANH";
+function computeKpis(node,vals){const ext={...vals};if(node.derive)Object.assign(ext,node.derive(ext));return node.kpis.map(k=>{let v=k.calc(ext);if(!isFinite(v))v=0;return {...k,val:v,status:statusOf(v,k.good,k.bad,k.dir),score:scoreOf(v,k.good,k.bad,k.dir)};});}
+
+const KPIDEPTS = [
+ {code:"HCNS",name:"Hành chính – Nhân sự",short:"HC–NS",
+  inputs:[["ns_dau","Nhân sự đầu kỳ","người",320],["ns_tuyen","Tuyển mới","người",12],["ns_nghi","Nghỉ việc","người",4],["vt_kh","Vị trí cần tuyển","vị trí",15],["vt_dat","Vị trí tuyển đạt","vị trí",12],["luong_tt","Quỹ lương thực tế","triệu",9800],["luong_kh","Quỹ lương kế hoạch","triệu",9500],["dt_ky","Doanh thu kỳ","triệu",85000],["kpi_dat","Nhân sự đạt KPI","người",290]],
+  derive:v=>({ns_cuoi:v.ns_dau+v.ns_tuyen-v.ns_nghi}),
+  kpis:[{label:"Tỷ lệ nghỉ việc",unit:"%",fmt:"pct",good:1.7,bad:2.5,dir:"low",calc:v=>v.ns_nghi/((v.ns_dau+v.ns_cuoi)/2)*100},
+   {label:"% vị trí tuyển đạt KH",unit:"%",fmt:"pct",good:90,bad:70,dir:"high",calc:v=>v.vt_dat/v.vt_kh*100},
+   {label:"Quỹ lương TT / KH",unit:"%",fmt:"pct",good:100,bad:110,dir:"low",calc:v=>v.luong_tt/v.luong_kh*100},
+   {label:"Chi phí NS / Doanh thu",unit:"%",fmt:"pct",good:12,bad:18,dir:"low",calc:v=>v.luong_tt/v.dt_ky*100},
+   {label:"% nhân sự đạt KPI",unit:"%",fmt:"pct",good:85,bad:70,dir:"high",calc:v=>v.kpi_dat/v.ns_cuoi*100}]},
+ {code:"DATDAI",name:"Quản lý Đất đai",short:"Đất đai",
+  inputs:[["dt_tong","Tổng quỹ đất","ha",250],["dt_sach","Đất sạch","ha",180],["gpmb_kh","% GPMB kế hoạch","%",80],["gpmb_tt","% GPMB thực tế","%",68],["hs_can","Hồ sơ PL cần làm","hs",20],["hs_xong","Hồ sơ PL đã xong","hs",14],["tien_phai","Tiền SDĐ phải nộp","triệu",120000],["tien_da","Tiền SDĐ đã nộp","triệu",90000]],
+  kpis:[{label:"% đất sạch / quỹ đất",unit:"%",fmt:"pct",good:70,bad:50,dir:"high",calc:v=>v.dt_sach/v.dt_tong*100},
+   {label:"Chênh lệch GPMB (TT−KH)",unit:"đ%",fmt:"num",good:0,bad:-15,dir:"high",calc:v=>v.gpmb_tt-v.gpmb_kh},
+   {label:"% hồ sơ pháp lý xong",unit:"%",fmt:"pct",good:90,bad:70,dir:"high",calc:v=>v.hs_xong/v.hs_can*100},
+   {label:"% nộp nghĩa vụ TC đất",unit:"%",fmt:"pct",good:95,bad:70,dir:"high",calc:v=>v.tien_da/v.tien_phai*100}]},
+ {code:"DTPT",name:"Đầu tư – Phát triển dự án",short:"Đầu tư",
+  inputs:[["co_xet","Cơ hội thẩm định","ch",5],["co_to_da","Chuyển thành dự án","da",2],["mc_xong","Mốc PT hoàn thành","mốc",7],["mc_tong","Tổng mốc PT","mốc",10],["npv","NPV dự án","tỷ",280],["irr","IRR","%",14.5],["wacc","WACC kỳ vọng","%",12]],
+  kpis:[{label:"Tỷ lệ chuyển đổi cơ hội",unit:"%",fmt:"pct",good:40,bad:20,dir:"high",calc:v=>v.co_to_da/v.co_xet*100},
+   {label:"Chênh lệch IRR − WACC",unit:"đ%",fmt:"num",good:2,bad:0,dir:"high",calc:v=>v.irr-v.wacc},
+   {label:"NPV (biên an toàn)",unit:"tỷ",fmt:"int",good:50,bad:0,dir:"high",calc:v=>v.npv},
+   {label:"% hoàn thành mốc PT",unit:"%",fmt:"pct",good:90,bad:70,dir:"high",calc:v=>v.mc_xong/v.mc_tong*100}]},
+ {code:"TKE",name:"Quản lý Thiết kế",short:"Thiết kế",
+  inputs:[["hs_kh","Hồ sơ TK kế hoạch","hs",10],["hs_xong","Hồ sơ TK hoàn thành","hs",8],["hs_nop","Hồ sơ nộp duyệt","hs",8],["hs_duyet","Duyệt đúng hạn","hs",6],["cp_thaydoi","CP thay đổi TK","tỷ",6],["gt_goi","Giá trị gói TK","tỷ",320],["tk_kiem","Tiết kiệm VE","tỷ",9]],
+  kpis:[{label:"% hồ sơ TK hoàn thành",unit:"%",fmt:"pct",good:95,bad:80,dir:"high",calc:v=>v.hs_xong/v.hs_kh*100},
+   {label:"% hồ sơ duyệt đúng hạn",unit:"%",fmt:"pct",good:90,bad:75,dir:"high",calc:v=>v.hs_duyet/v.hs_nop*100},
+   {label:"CP thay đổi / giá trị gói",unit:"%",fmt:"pct",good:2,bad:3,dir:"low",calc:v=>v.cp_thaydoi/v.gt_goi*100},
+   {label:"Tỷ lệ tiết kiệm VE",unit:"%",fmt:"pct",good:3,bad:1,dir:"high",calc:v=>v.tk_kiem/v.gt_goi*100}]},
+ {code:"KHKT",name:"Kế hoạch Kỹ thuật",short:"KH–KT",
+  inputs:[["td_kh","% tiến độ KH","%",50],["td_tt","% tiến độ thực tế","%",46],["dutoan","Giá trị dự toán","tỷ",1200],["thucte","Giá trị thực tế","tỷ",1290],["ps_kl","Khối lượng phát sinh","tỷ",110],["gt_hd","Giá trị hợp đồng","tỷ",1200]],
+  kpis:[{label:"Chênh lệch tiến độ (TT−KH)",unit:"đ%",fmt:"num",good:0,bad:-10,dir:"high",calc:v=>v.td_tt-v.td_kh},
+   {label:"Sai lệch dự toán",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>(v.thucte-v.dutoan)/v.dutoan*100},
+   {label:"% khối lượng phát sinh",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>v.ps_kl/v.gt_hd*100}]},
+ {code:"THCO",name:"Quản lý Thi công",short:"Thi công",
+  inputs:[["ev","EV – Giá trị thực hiện","tỷ",92],["pv","PV – Giá trị kế hoạch","tỷ",100],["ac","AC – Chi phí thực tế","tỷ",95],["nt_dat","Nghiệm thu đạt L1","hm",27],["nt_tong","Tổng nghiệm thu","hm",30],["nl_hd","Nhân lực huy động","người",210],["nl_cau","Nhân lực nhu cầu","người",250]],
+  kpis:[{label:"SPI – hiệu quả tiến độ",unit:"×",fmt:"x",good:1,bad:0.8,dir:"high",calc:v=>v.ev/v.pv},
+   {label:"CPI – hiệu quả chi phí",unit:"×",fmt:"x",good:1,bad:0.95,dir:"high",calc:v=>v.ev/v.ac},
+   {label:"% nghiệm thu đạt lần 1",unit:"%",fmt:"pct",good:95,bad:90,dir:"high",calc:v=>v.nt_dat/v.nt_tong*100},
+   {label:"% huy động nhân lực",unit:"%",fmt:"pct",good:95,bad:85,dir:"high",calc:v=>v.nl_hd/v.nl_cau*100}]},
+ {code:"TCHI",name:"Tài chính",short:"Tài chính",
+  inputs:[["thu","Tổng thu kỳ","triệu",120000],["chi","Tổng chi kỳ","triệu",118000],["no_vay","Tổng nợ vay","triệu",980000],["vcsh","Vốn chủ sở hữu","triệu",520000],["ebitda","EBITDA 12T","triệu",260000],["phai_thu","Phải thu KH","triệu",210000],["no_qh","Nợ quá hạn","triệu",16000],["dt_nam","Doanh thu 12T","triệu",1500000]],
+  kpis:[{label:"Dòng tiền thuần kỳ",unit:"triệu",fmt:"int",good:5000,bad:0,dir:"high",calc:v=>v.thu-v.chi},
+   {label:"Nợ vay / Vốn chủ (D/E)",unit:"×",fmt:"x",good:1.5,bad:2,dir:"low",calc:v=>v.no_vay/v.vcsh},
+   {label:"Nợ vay / EBITDA",unit:"×",fmt:"x",good:3,bad:4,dir:"low",calc:v=>v.no_vay/v.ebitda},
+   {label:"Số ngày phải thu (DSO)",unit:"ngày",fmt:"num",good:60,bad:90,dir:"low",calc:v=>v.phai_thu/v.dt_nam*365},
+   {label:"% nợ quá hạn",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>v.no_qh/v.phai_thu*100}]},
+ {code:"KTOA",name:"Kế toán",short:"Kế toán",
+  inputs:[["dt","Doanh thu kỳ","triệu",120000],["gv","Giá vốn","triệu",102000],["cp_bh_ql","CP bán hàng+QLDN","triệu",9000],["thue","Thuế TNDN","triệu",1800],["vcsh","Vốn chủ sở hữu","triệu",520000],["ns_chi_kh","Ngân sách chi phí","triệu",8800],["ns_chi_tt","Chi phí thực tế","triệu",9000]],
+  derive:v=>{const lg=v.dt-v.gv;const lt=lg-v.cp_bh_ql;return{ln_gop:lg,ln_st:lt-v.thue};},
+  kpis:[{label:"Biên lợi nhuận gộp",unit:"%",fmt:"pct",good:15,bad:10,dir:"high",calc:v=>v.ln_gop/v.dt*100},
+   {label:"Biên lợi nhuận ròng",unit:"%",fmt:"pct",good:8,bad:4,dir:"high",calc:v=>v.ln_st/v.dt*100},
+   {label:"ROE (quy đổi năm)",unit:"%",fmt:"pct",good:15,bad:8,dir:"high",calc:v=>v.ln_st*12/v.vcsh*100},
+   {label:"Vượt ngân sách chi phí",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>(v.ns_chi_tt-v.ns_chi_kh)/v.ns_chi_kh*100}]},
+ {code:"PCHE",name:"Pháp chế",short:"Pháp chế",
+  inputs:[["hd_ruiro","HĐ rủi ro cao chưa xử lý","HĐ",3],["tc_gt","Giá trị tranh chấp","tỷ",18],["vcsh","Vốn chủ sở hữu","tỷ",520],["tt_vande","Vấn đề tuân thủ","vđ",1],["rr_chua","Rủi ro PL nghiêm trọng","rr",1]],
+  kpis:[{label:"Giá trị tranh chấp / VCSH",unit:"%",fmt:"pct",good:2,bad:5,dir:"low",calc:v=>v.tc_gt/v.vcsh*100},
+   {label:"HĐ rủi ro cao chưa xử lý",unit:"HĐ",fmt:"int",good:0,bad:2,dir:"low",calc:v=>v.hd_ruiro},
+   {label:"Rủi ro PL nghiêm trọng",unit:"rr",fmt:"int",good:0,bad:1,dir:"low",calc:v=>v.rr_chua},
+   {label:"Vấn đề tuân thủ phát hiện",unit:"vđ",fmt:"int",good:0,bad:2,dir:"low",calc:v=>v.tt_vande}]},
+ {code:"KDOA",name:"Kinh doanh",short:"Kinh doanh",
+  inputs:[["ds_luyke","Doanh số lũy kế","tỷ",820],["kh_luyke","KH doanh số lũy kế","tỷ",1000],["sp_moban","SP mở bán","sp",200],["sp_daban","SP đã bán","sp",96],["lead","Lead","lead",450],["chot","Giao dịch chốt","gd",38],["pt_tiendo","Phải thu theo tiến độ","tỷ",240],["da_thu","Đã thu","tỷ",205]],
+  kpis:[{label:"% hoàn thành KH doanh số",unit:"%",fmt:"pct",good:100,bad:85,dir:"high",calc:v=>v.ds_luyke/v.kh_luyke*100},
+   {label:"Tỷ lệ hấp thụ",unit:"%",fmt:"pct",good:70,bad:50,dir:"high",calc:v=>v.sp_daban/v.sp_moban*100},
+   {label:"Tỷ lệ chốt (lead→deal)",unit:"%",fmt:"pct",good:10,bad:5,dir:"high",calc:v=>v.chot/v.lead*100},
+   {label:"% thu theo tiến độ",unit:"%",fmt:"pct",good:95,bad:85,dir:"high",calc:v=>v.da_thu/v.pt_tiendo*100}]},
+ {code:"MKTG",name:"Marketing",short:"Marketing",
+  inputs:[["lead","Lead tạo ra","lead",450],["lead_cl","Lead chất lượng","lead",270],["ln_mkt","Giá trị quy đổi MKT","triệu",2400],["cp_mkt","Chi phí MKT","triệu",850],["ns_mkt","Ngân sách MKT","triệu",800]],
+  kpis:[{label:"Chi phí / lead (CPL)",unit:"triệu",fmt:"x",good:1.8,bad:2.5,dir:"low",calc:v=>v.cp_mkt/v.lead},
+   {label:"ROI Marketing",unit:"×",fmt:"x",good:3,bad:1,dir:"high",calc:v=>(v.ln_mkt-v.cp_mkt)/v.cp_mkt},
+   {label:"% lead chất lượng",unit:"%",fmt:"pct",good:60,bad:40,dir:"high",calc:v=>v.lead_cl/v.lead*100},
+   {label:"Vượt ngân sách MKT",unit:"%",fmt:"pct",good:5,bad:10,dir:"low",calc:v=>(v.cp_mkt-v.ns_mkt)/v.ns_mkt*100}]},
+ {code:"VTU",name:"Vật tư",short:"Vật tư",
+  inputs:[["ms_ky","Giá trị mua sắm","tỷ",95],["ms_dutoan","Dự toán mua sắm","tỷ",100],["gv","Giá vốn xuất dùng","tỷ",90],["tk_bq","Tồn kho bình quân","tỷ",55],["don_dunghan","Đơn giao đúng hạn","đơn",88],["don_tong","Tổng đơn","đơn",100],["gia_vt","Chỉ số giá VT","đ",112]],
+  kpis:[{label:"Tỷ lệ tiết kiệm mua sắm",unit:"%",fmt:"pct",good:2,bad:-5,dir:"high",calc:v=>(v.ms_dutoan-v.ms_ky)/v.ms_dutoan*100},
+   {label:"Vòng quay tồn kho",unit:"×",fmt:"x",good:1.5,bad:0.8,dir:"high",calc:v=>v.gv/v.tk_bq},
+   {label:"% giao hàng đúng hạn",unit:"%",fmt:"pct",good:95,bad:90,dir:"high",calc:v=>v.don_dunghan/v.don_tong*100},
+   {label:"Biến động giá VT chủ chốt",unit:"%",fmt:"num",good:5,bad:10,dir:"low",calc:v=>v.gia_vt-100}]},
+ {code:"ATAT",name:"An ninh – An toàn",short:"An toàn",
+  inputs:[["tnld","TNLĐ trong kỳ","vụ",0],["gio_cong","Tổng giờ công","giờ",480000],["ngay_at","Ngày an toàn liên tục","ngày",145],["sc_so","Số sự cố","sc",3],["sc_dunghan","Khắc phục đúng hạn","sc",2],["an_ninh","Mất an ninh","vụ",0],["moi_truong","Vi phạm môi trường","vụ",0]],
+  kpis:[{label:"LTIFR (tần suất TNLĐ)",unit:"",fmt:"x",good:0,bad:1,dir:"low",calc:v=>v.tnld*1000000/v.gio_cong},
+   {label:"Số ngày an toàn liên tục",unit:"ngày",fmt:"int",good:90,bad:30,dir:"high",calc:v=>v.ngay_at},
+   {label:"% khắc phục sự cố đúng hạn",unit:"%",fmt:"pct",good:95,bad:85,dir:"high",calc:v=>v.sc_dunghan/v.sc_so*100},
+   {label:"Vi phạm an ninh + môi trường",unit:"vụ",fmt:"int",good:0,bad:1,dir:"low",calc:v=>v.an_ninh+v.moi_truong}]},
+];
+
+/* ===== data: dự án (EVM) ===== */
+const PRJ_INPUTS=[
+ ["g1","TIẾN ĐỘ",[["td_kh","% tiến độ KH","%"],["td_tt","% tiến độ thực tế","%"],["mc_xong","Mốc hoàn thành","mốc"],["mc_tong","Tổng mốc","mốc"]]],
+ ["g2","CHI PHÍ – EVM",[["bac","BAC – Tổng ngân sách","tỷ"],["pv","PV – Kế hoạch đến kỳ","tỷ"],["ev","EV – Thực hiện","tỷ"],["ac","AC – Chi phí thực tế","tỷ"]]],
+ ["g3","CHẤT LƯỢNG",[["nt_dat","Nghiệm thu đạt L1","hm"],["nt_tong","Tổng nghiệm thu","hm"],["ncr","Lỗi/NCR mở","lỗi"]]],
+ ["g4","AN TOÀN (HSE)",[["tnld","TNLĐ kỳ","vụ"],["gio_cong","Giờ công","giờ"],["ngay_at","Ngày an toàn","ngày"]]],
+ ["g5","DÒNG TIỀN",[["nt_luyke","Nghiệm thu lũy kế","tỷ"],["da_thu","Đã thu","tỷ"]]],
+];
+const PRJ_DERIVE=v=>{const eac=v.bac*v.ac/v.ev;return{sv:v.ev-v.pv,cv:v.ev-v.ac,eac,vac:v.bac-eac,etc:eac-v.ac};};
+const PRJ_KPIS=[
+ {label:"% tiến độ TT / KH",unit:"%",fmt:"pct",good:100,bad:90,dir:"high",calc:v=>v.td_tt/v.td_kh*100},
+ {label:"SPI – hiệu quả tiến độ",unit:"×",fmt:"x",good:1,bad:0.9,dir:"high",calc:v=>v.ev/v.pv},
+ {label:"CPI – hiệu quả chi phí",unit:"×",fmt:"x",good:1,bad:0.95,dir:"high",calc:v=>v.ev/v.ac},
+ {label:"Chênh lệch tiến độ (SV%)",unit:"%",fmt:"num",good:0,bad:-10,dir:"high",calc:v=>(v.ev-v.pv)/v.pv*100},
+ {label:"Dự báo ngân sách (VAC%)",unit:"%",fmt:"num",good:0,bad:-5,dir:"high",calc:v=>(v.bac-v.bac*v.ac/v.ev)/v.bac*100},
+ {label:"% nghiệm thu đạt L1",unit:"%",fmt:"pct",good:95,bad:90,dir:"high",calc:v=>v.nt_dat/v.nt_tong*100},
+ {label:"Số lỗi/NCR mở",unit:"lỗi",fmt:"int",good:0,bad:5,dir:"low",calc:v=>v.ncr},
+ {label:"LTIFR",unit:"",fmt:"x",good:0,bad:1,dir:"low",calc:v=>v.tnld*1000000/v.gio_cong},
+ {label:"Ngày an toàn liên tục",unit:"ngày",fmt:"int",good:90,bad:30,dir:"high",calc:v=>v.ngay_at},
+ {label:"% thu theo nghiệm thu",unit:"%",fmt:"pct",good:90,bad:75,dir:"high",calc:v=>v.da_thu/v.nt_luyke*100},
+];
+const PROJECTS=[
+ {code:"DA1",name:"NOXH Quang Châu",role:"Chủ đầu tư",vals:{td_kh:62,td_tt:59,mc_xong:8,mc_tong:12,bac:1000,pv:620,ev:590,ac:610,nt_dat:24,nt_tong:28,ncr:4,tnld:0,gio_cong:320000,ngay_at:120,nt_luyke:590,da_thu:520}},
+ {code:"DA2",name:"Cụm công nghiệp Yên Lư",role:"CĐT kiêm Tổng thầu",vals:{td_kh:45,td_tt:40,mc_xong:5,mc_tong:11,bac:1500,pv:680,ev:600,ac:650,nt_dat:18,nt_tong:22,ncr:7,tnld:1,gio_cong:410000,ngay_at:12,nt_luyke:600,da_thu:470}},
+ {code:"DA3",name:"DA TM&NO HH4",role:"Nhà thầu thi công",vals:{td_kh:70,td_tt:72,mc_xong:9,mc_tong:12,bac:600,pv:420,ev:430,ac:425,nt_dat:29,nt_tong:30,ncr:1,tnld:0,gio_cong:260000,ngay_at:210,nt_luyke:430,da_thu:410}},
+ {code:"DA4",name:"Khu đô thị Lạc phú 3",role:"Chủ đầu tư",vals:{td_kh:55,td_tt:53,mc_xong:6,mc_tong:10,bac:1200,pv:560,ev:545,ac:550,nt_dat:27,nt_tong:29,ncr:3,tnld:0,gio_cong:300000,ngay_at:95,nt_luyke:545,da_thu:500}},
+];
+
+const DEPTS=[{"code": "HCNS", "name": "Phòng Hành chính – Nhân sự", "short": "HC–NS", "sheet": "HC-NS", "user": "hcns"}, {"code": "DATDAI", "name": "Phòng Quản lý Đất đai", "short": "Đất đai", "sheet": "Đất đai", "user": "datdai"}, {"code": "DTPT", "name": "Phòng Đầu tư – Phát triển dự án", "short": "Đầu tư", "sheet": "Đầu tư", "user": "dtpt"}, {"code": "TKE", "name": "Phòng Quản lý Thiết kế", "short": "Thiết kế", "sheet": "Thiết kế", "user": "tke"}, {"code": "KHKT", "name": "Phòng Kế hoạch Kỹ thuật", "short": "KH–KT", "sheet": "KH-KT", "user": "khkt"}, {"code": "THCO", "name": "Phòng Quản lý Thi công", "short": "Thi công", "sheet": "Thi công", "user": "thco"}, {"code": "TCHI", "name": "Phòng Tài chính", "short": "Tài chính", "sheet": "Tài chính", "user": "tchi"}, {"code": "KTOA", "name": "Phòng Kế toán", "short": "Kế toán", "sheet": "Kế toán", "user": "ktoa"}, {"code": "PCHE", "name": "Phòng Pháp chế", "short": "Pháp chế", "sheet": "Pháp chế", "user": "pche"}, {"code": "KDOA", "name": "Phòng Kinh doanh", "short": "Kinh doanh", "sheet": "Kinh doanh", "user": "kdoa"}, {"code": "MKTG", "name": "Phòng Marketing", "short": "Marketing", "sheet": "Marketing", "user": "mktg"}, {"code": "VTU", "name": "Phòng Vật tư", "short": "Vật tư", "sheet": "Vật tư", "user": "vtu"}, {"code": "ATAT", "name": "Phòng An ninh – An toàn", "short": "An toàn", "sheet": "An toàn", "user": "atat"}];
+const TASKS_DEFAULT={"HCNS": [{"noidung": "Triển khai kế hoạch tuyển dụng theo nhu cầu các phòng/dự án", "muctieu": "Đáp ứng đủ nhân sự đúng thời điểm", "phutrach": "CV Tuyển dụng", "trangthai": "Đang thực hiện", "pct": 70}, {"noidung": "Tổ chức đào tạo, huấn luyện nhân sự", "muctieu": "Hoàn thành KH đào tạo kỳ", "phutrach": "CV Đào tạo", "trangthai": "Đang thực hiện", "pct": 50}, {"noidung": "Tính lương, BHXH và chế độ phúc lợi", "muctieu": "Chi trả đúng hạn, chính xác", "phutrach": "CV C&B", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Đánh giá hiệu suất (KPI/OKR) định kỳ", "muctieu": "Tổng hợp kết quả toàn công ty", "phutrach": "CV Hiệu suất", "trangthai": "Đang thực hiện", "pct": 40}, {"noidung": "Quản lý hồ sơ nhân sự, hợp đồng lao động", "muctieu": "Hồ sơ đầy đủ, đúng quy định", "phutrach": "CV Nhân sự", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Cập nhật nội quy, quy chế nội bộ", "muctieu": "Ban hành quy chế mới", "phutrach": "Trưởng nhóm HC", "trangthai": "Chưa thực hiện", "pct": 0}, {"noidung": "Công tác hành chính, văn thư, quản lý tài sản VP", "muctieu": "Vận hành thông suốt", "phutrach": "CV Hành chính", "trangthai": "Đang thực hiện", "pct": 60}], "DATDAI": [{"noidung": "Rà soát, cập nhật quỹ đất & quỹ đất sạch", "muctieu": "Bản đồ quỹ đất cập nhật", "phutrach": "CV Đất đai", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Phối hợp GPMB, bồi thường, tái định cư", "muctieu": "Đạt tiến độ GPMB theo KH", "phutrach": "CV GPMB", "trangthai": "Đang thực hiện", "pct": 55}, {"noidung": "Hoàn thiện hồ sơ pháp lý đất đai", "muctieu": "Có QĐ giao/thuê đất", "phutrach": "CV Pháp lý đất", "trangthai": "Đang thực hiện", "pct": 45}, {"noidung": "Thực hiện nghĩa vụ tài chính về đất", "muctieu": "Nộp đúng hạn", "phutrach": "CV Đất đai", "trangthai": "Đang thực hiện", "pct": 75}, {"noidung": "Làm việc với cơ quan nhà nước về đất đai", "muctieu": "Tháo gỡ vướng mắc", "phutrach": "Trưởng phòng", "trangthai": "Quá hạn", "pct": 30}, {"noidung": "Theo dõi biến động, tranh chấp ranh giới đất", "muctieu": "Không phát sinh tranh chấp", "phutrach": "CV Đất đai", "trangthai": "Chưa thực hiện", "pct": 0}], "DTPT": [{"noidung": "Tìm kiếm, sàng lọc cơ hội đầu tư (pipeline)", "muctieu": "Bổ sung cơ hội mới", "phutrach": "CV Phát triển DA", "trangthai": "Đang thực hiện", "pct": 60}, {"noidung": "Lập & thẩm định phương án đầu tư (NPV/IRR)", "muctieu": "Phương án đạt ngưỡng hiệu quả", "phutrach": "CV Thẩm định", "trangthai": "Đang thực hiện", "pct": 50}, {"noidung": "Lập hồ sơ xin chủ trương đầu tư", "muctieu": "Được chấp thuận chủ trương", "phutrach": "CV Phát triển DA", "trangthai": "Đang thực hiện", "pct": 40}, {"noidung": "Theo dõi tiến độ phát triển dự án theo mốc", "muctieu": "Đạt các mốc đề ra", "phutrach": "Trưởng nhóm DA", "trangthai": "Đang thực hiện", "pct": 65}, {"noidung": "Đánh giá hiệu quả sau đầu tư (post-mortem)", "muctieu": "Báo cáo rút kinh nghiệm", "phutrach": "CV Thẩm định", "trangthai": "Chưa thực hiện", "pct": 0}], "TKE": [{"noidung": "Quản lý tiến độ hồ sơ thiết kế các bước", "muctieu": "Đúng tiến độ phát hành", "phutrach": "CV Quản lý TK", "trangthai": "Đang thực hiện", "pct": 72}, {"noidung": "Tổ chức thẩm tra, phê duyệt thiết kế", "muctieu": "Hồ sơ được duyệt đúng hạn", "phutrach": "CV Quản lý TK", "trangthai": "Đang thực hiện", "pct": 60}, {"noidung": "Quản lý thay đổi thiết kế (change order)", "muctieu": "Kiểm soát phát sinh", "phutrach": "CV Quản lý TK", "trangthai": "Đang thực hiện", "pct": 80}, {"noidung": "Tối ưu chi phí qua value-engineering", "muctieu": "Đạt mục tiêu tiết kiệm", "phutrach": "Trưởng phòng", "trangthai": "Đang thực hiện", "pct": 35}, {"noidung": "Phối hợp đơn vị tư vấn thiết kế", "muctieu": "Đảm bảo chất lượng hồ sơ", "phutrach": "CV Quản lý TK", "trangthai": "Hoàn thành", "pct": 100}], "KHKT": [{"noidung": "Lập & cập nhật kế hoạch tổng thể (master plan)", "muctieu": "KH tổng thể được duyệt", "phutrach": "CV Kế hoạch", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Lập dự toán, tiên lượng khối lượng", "muctieu": "Dự toán chính xác", "phutrach": "CV Dự toán", "trangthai": "Đang thực hiện", "pct": 55}, {"noidung": "Cập nhật định mức, đơn giá nội bộ", "muctieu": "Đơn giá sát thị trường", "phutrach": "CV Kỹ thuật", "trangthai": "Đang thực hiện", "pct": 40}, {"noidung": "Kiểm soát nghiệm thu khối lượng & thanh toán", "muctieu": "Nghiệm thu đúng khối lượng", "phutrach": "CV Kỹ thuật", "trangthai": "Đang thực hiện", "pct": 68}, {"noidung": "Quản lý, lưu trữ hồ sơ kỹ thuật", "muctieu": "Hồ sơ đầy đủ", "phutrach": "CV Kỹ thuật", "trangthai": "Chưa thực hiện", "pct": 0}], "THCO": [{"noidung": "Lập & kiểm soát tiến độ thi công (SPI)", "muctieu": "Bám sát tiến độ KH", "phutrach": "Chỉ huy trưởng", "trangthai": "Đang thực hiện", "pct": 52}, {"noidung": "Quản lý chất lượng, nghiệm thu (QA/QC)", "muctieu": "Tỷ lệ đạt nghiệm thu cao", "phutrach": "CV QA/QC", "trangthai": "Đang thực hiện", "pct": 75}, {"noidung": "Điều phối nhân lực, thiết bị công trường", "muctieu": "Đáp ứng nhu cầu thi công", "phutrach": "Chỉ huy trưởng", "trangthai": "Đang thực hiện", "pct": 60}, {"noidung": "Quản lý nhà thầu phụ", "muctieu": "Thầu phụ đạt tiến độ", "phutrach": "CV Thi công", "trangthai": "Quá hạn", "pct": 35}, {"noidung": "Báo cáo sản lượng thi công", "muctieu": "Đạt sản lượng KH kỳ", "phutrach": "CV Thi công", "trangthai": "Đang thực hiện", "pct": 58}, {"noidung": "Đảm bảo an toàn, vệ sinh công trường", "muctieu": "Không sự cố mất an toàn", "phutrach": "CV HSE công trường", "trangthai": "Hoàn thành", "pct": 100}], "TCHI": [{"noidung": "Lập & theo dõi kế hoạch dòng tiền", "muctieu": "Đảm bảo thanh khoản", "phutrach": "CV Tài chính", "trangthai": "Đang thực hiện", "pct": 70}, {"noidung": "Cân đối nguồn vốn, kiểm soát đòn bẩy", "muctieu": "Cơ cấu vốn an toàn", "phutrach": "Trưởng phòng", "trangthai": "Đang thực hiện", "pct": 60}, {"noidung": "Quản lý công nợ phải thu/phải trả", "muctieu": "Giảm nợ quá hạn", "phutrach": "CV Công nợ", "trangthai": "Đang thực hiện", "pct": 50}, {"noidung": "Huy động vốn cho dự án (vay, trái phiếu)", "muctieu": "Đủ vốn theo tiến độ", "phutrach": "Trưởng phòng", "trangthai": "Đang thực hiện", "pct": 45}, {"noidung": "Phân tích hiệu quả tài chính dự án", "muctieu": "Báo cáo hiệu quả định kỳ", "phutrach": "CV Tài chính", "trangthai": "Chưa thực hiện", "pct": 0}], "KTOA": [{"noidung": "Lập báo cáo tài chính định kỳ", "muctieu": "BCTC đúng hạn, chính xác", "phutrach": "Kế toán tổng hợp", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Hạch toán, kiểm soát chi phí", "muctieu": "Chi phí trong ngân sách", "phutrach": "Kế toán chi phí", "trangthai": "Đang thực hiện", "pct": 65}, {"noidung": "Kê khai & nộp thuế đúng hạn", "muctieu": "Tuân thủ nghĩa vụ thuế", "phutrach": "Kế toán thuế", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Quyết toán dự án/hợp đồng", "muctieu": "Quyết toán đúng quy định", "phutrach": "Kế toán dự án", "trangthai": "Đang thực hiện", "pct": 40}, {"noidung": "Đối chiếu công nợ, quỹ, ngân hàng", "muctieu": "Số liệu khớp đúng", "phutrach": "Kế toán tổng hợp", "trangthai": "Đang thực hiện", "pct": 80}], "PCHE": [{"noidung": "Rà soát, soạn thảo, quản lý hợp đồng", "muctieu": "HĐ chặt chẽ, giảm rủi ro", "phutrach": "CV Pháp chế", "trangthai": "Đang thực hiện", "pct": 70}, {"noidung": "Theo dõi & xử lý tranh chấp, tố tụng", "muctieu": "Bảo vệ quyền lợi công ty", "phutrach": "Trưởng phòng", "trangthai": "Đang thực hiện", "pct": 50}, {"noidung": "Đảm bảo tuân thủ pháp luật (compliance)", "muctieu": "Không vi phạm tuân thủ", "phutrach": "CV Pháp chế", "trangthai": "Đang thực hiện", "pct": 60}, {"noidung": "Đánh giá rủi ro pháp lý dự án", "muctieu": "Nhận diện & xử lý rủi ro", "phutrach": "CV Pháp chế", "trangthai": "Quá hạn", "pct": 30}, {"noidung": "Tư vấn pháp lý cho các phòng/ban", "muctieu": "Hỗ trợ kịp thời", "phutrach": "CV Pháp chế", "trangthai": "Hoàn thành", "pct": 100}], "KDOA": [{"noidung": "Lập & triển khai kế hoạch bán hàng", "muctieu": "Đạt KH doanh số kỳ", "phutrach": "Trưởng phòng", "trangthai": "Đang thực hiện", "pct": 55}, {"noidung": "Quản lý phễu bán hàng, chuyển đổi khách", "muctieu": "Tăng tỷ lệ chốt", "phutrach": "CV Kinh doanh", "trangthai": "Đang thực hiện", "pct": 60}, {"noidung": "Theo dõi tỷ lệ hấp thụ & tồn kho sản phẩm", "muctieu": "Giảm tồn kho", "phutrach": "CV Kinh doanh", "trangthai": "Đang thực hiện", "pct": 48}, {"noidung": "Thu hồi công nợ khách hàng theo tiến độ", "muctieu": "Thu đúng tiến độ HĐ", "phutrach": "CV Kinh doanh", "trangthai": "Đang thực hiện", "pct": 75}, {"noidung": "Chăm sóc khách hàng, đối tác phân phối", "muctieu": "Duy trì quan hệ tốt", "phutrach": "CV CSKH", "trangthai": "Hoàn thành", "pct": 100}], "MKTG": [{"noidung": "Lập & triển khai chiến dịch marketing", "muctieu": "Đạt mục tiêu lead", "phutrach": "CV Marketing", "trangthai": "Đang thực hiện", "pct": 65}, {"noidung": "Quản lý nguồn & chất lượng lead", "muctieu": "Tăng % lead chất lượng", "phutrach": "CV Marketing", "trangthai": "Đang thực hiện", "pct": 55}, {"noidung": "Kiểm soát ngân sách marketing", "muctieu": "Trong ngân sách", "phutrach": "Trưởng phòng", "trangthai": "Đang thực hiện", "pct": 70}, {"noidung": "Quản trị thương hiệu & truyền thông", "muctieu": "Không khủng hoảng TT", "phutrach": "CV Marketing", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Phối hợp kinh doanh ra mắt sản phẩm", "muctieu": "Ra mắt đúng kế hoạch", "phutrach": "CV Marketing", "trangthai": "Chưa thực hiện", "pct": 0}], "VTU": [{"noidung": "Lập kế hoạch & tổ chức mua sắm vật tư", "muctieu": "Mua sắm tiết kiệm, đúng hạn", "phutrach": "CV Vật tư", "trangthai": "Đang thực hiện", "pct": 60}, {"noidung": "Quản lý tồn kho, cấp phát vật tư", "muctieu": "Tồn kho hợp lý", "phutrach": "CV Kho", "trangthai": "Đang thực hiện", "pct": 72}, {"noidung": "Theo dõi biến động giá vật tư chủ chốt", "muctieu": "Cảnh báo kịp thời", "phutrach": "CV Vật tư", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Đánh giá & quản lý nhà cung cấp", "muctieu": "NCC đạt chất lượng", "phutrach": "CV Vật tư", "trangthai": "Đang thực hiện", "pct": 50}, {"noidung": "Kiểm soát chất lượng vật tư đầu vào", "muctieu": "Vật tư đạt yêu cầu", "phutrach": "CV Vật tư", "trangthai": "Đang thực hiện", "pct": 65}], "ATAT": [{"noidung": "Giám sát an toàn lao động (HSE) công trường", "muctieu": "0 tai nạn nghiêm trọng", "phutrach": "CV HSE", "trangthai": "Đang thực hiện", "pct": 80}, {"noidung": "Ghi nhận & xử lý sự cố, near-miss", "muctieu": "Khắc phục đúng hạn", "phutrach": "CV HSE", "trangthai": "Đang thực hiện", "pct": 60}, {"noidung": "Quản lý an ninh, bảo vệ tài sản", "muctieu": "Không mất mát tài sản", "phutrach": "CV An ninh", "trangthai": "Hoàn thành", "pct": 100}, {"noidung": "Kiểm soát môi trường, PCCC", "muctieu": "Tuân thủ quy định", "phutrach": "CV HSE", "trangthai": "Đang thực hiện", "pct": 55}, {"noidung": "Tổ chức huấn luyện an toàn định kỳ", "muctieu": "100% công nhân được huấn luyện", "phutrach": "CV HSE", "trangthai": "Quá hạn", "pct": 40}]};
+const ACCOUNTS=(()=>{const a={};DEPTS.forEach(d=>{a[d.user]={pw:"123456",role:"dept",code:d.code,name:d.name};});a["lanhdao"]={pw:"admin",role:"admin",name:"Ban Lãnh đạo"};return a;})();
+const deptByCode=c=>DEPTS.find(d=>d.code===c);
+const kpiDeptByCode=c=>KPIDEPTS.find(d=>d.code===c);
+
+/* storage (kho dùng chung -> bộ nhớ trình duyệt -> bộ nhớ tạm) */
+const HAS_WS=typeof window!=="undefined"&&window.storage&&typeof window.storage.get==="function";
+let HAS_LS=false; try{localStorage.setItem("__t","1");localStorage.removeItem("__t");HAS_LS=true;}catch(e){HAS_LS=false;}
+const MEM=new Map();
+async function sget(key){if(HAS_WS){try{const r=await window.storage.get(key,true);return r?r.value:null;}catch(e){return null;}}if(HAS_LS){try{return localStorage.getItem(key);}catch(e){}}return MEM.has(key)?MEM.get(key):null;}
+async function sset(key,val){if(HAS_WS){try{await window.storage.set(key,val,true);return;}catch(e){}}if(HAS_LS){try{localStorage.setItem(key,val);return;}catch(e){}}MEM.set(key,val);}
+const STORAGE_LABEL=HAS_WS?"Kho lưu trữ dùng chung":(HAS_LS?"Bộ nhớ trình duyệt (máy này)":"Bộ nhớ tạm");
+
+/* excel */
+const gcell=(row,cols,name)=>{const i=cols[name];return i==null?"":(row[i]==null?"":String(row[i]).trim());};
+const normStatus=s=>{const t=String(s||"").trim();if(STATUSES.includes(t))return t;const lo=t.toLowerCase();for(const v of STATUSES)if(v.toLowerCase()===lo)return v;return t?"Đang thực hiện":"Chưa thực hiện";};
+function extractTasks(ws){const rows=XLSX.utils.sheet_to_json(ws,{header:1,blankrows:false});let hr=-1,cols={};
+ for(let i=0;i<rows.length;i++){const idx=rows[i].findIndex(c=>String(c).trim()==="Nội dung công việc");if(idx>=0){hr=i;rows[i].forEach((c,ci)=>{cols[String(c).trim()]=ci;});break;}}
+ if(hr<0)return null;const out=[];
+ for(let i=hr+1;i<rows.length;i++){const row=rows[i]||[];const nd=gcell(row,cols,"Nội dung công việc");if(!nd)continue;
+  out.push({id:"x"+Date.now()+"_"+i+"_"+Math.floor(Math.random()*1000),noidung:nd,muctieu:gcell(row,cols,"Mục tiêu / Kết quả mong đợi"),phutrach:gcell(row,cols,"Người phụ trách"),phoihop:gcell(row,cols,"Phối hợp"),batdau:gcell(row,cols,"Bắt đầu"),han:gcell(row,cols,"Hạn hoàn thành"),trangthai:normStatus(gcell(row,cols,"Trạng thái")),pct:Number(gcell(row,cols,"% hoàn thành"))||0,ketqua:gcell(row,cols,"Kết quả thực hiện"),khokhan:gcell(row,cols,"Khó khăn / vướng mắc"),dexuat:gcell(row,cols,"Đề xuất / Kế hoạch tiếp theo")});}
+ return out;}
+function parseFile(buf){const wb=XLSX.read(new Uint8Array(buf),{type:"array"});const res={};wb.SheetNames.forEach(sn=>{const t=extractTasks(wb.Sheets[sn]);if(t&&t.length)res[sn]=t;});return res;}
+function matchDept(sheetName){const s=sheetName.trim().toLowerCase();let d=DEPTS.find(x=>x.sheet.toLowerCase()===s);if(d)return d.code;d=DEPTS.find(x=>s.includes(x.sheet.toLowerCase())||x.short.toLowerCase().replace("–","-").includes(s));return d?d.code:null;}
+
+function deptStats(tasks){const c={total:tasks.length};STATUSES.forEach(s=>c[s]=0);let sum=0,n=0;tasks.forEach(t=>{const st=STATUSES.includes(t.trangthai)?t.trangthai:"Chưa thực hiện";c[st]++;sum+=Number(t.pct)||0;n++;});c.pctAvg=n?sum/n:0;c.eval=c["Quá hạn"]>0?"Cần chú ý":(c.pctAvg>=80?"Tốt":(c.pctAvg>=50?"Bình thường":"Chậm"));return c;}
+
+/* ---- UI bits ---- */
+const Icon=({d,size=16})=>(<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{d}</svg>);
+const IcGrid=<Icon d={<><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></>}/>;
+const IcList=<Icon d={<><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></>}/>;
+const IcGauge=<Icon d={<><path d="M12 14l4-4M3.34 19a10 10 0 1 1 17.32 0"/></>}/>;
+const IcFolder=<Icon d={<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>}/>;
+const IcUpload=<Icon d={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></>}/>;
+const IcSave=<Icon d={<><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></>}/>;
+const IcPlus=<Icon d={<path d="M12 5v14M5 12h14"/>}/>;
+const IcOut=<Icon d={<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></>}/>;
+const IcTrash=<Icon size={15} d={<><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>}/>;
+
+function TaskBadge({s}){const t=TASK_STA[s]||TASK_STA["Chưa thực hiện"];return <span style={{background:t.bg,color:t.c}} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold"><span style={{background:t.dot}} className="w-1.5 h-1.5 rounded-full"></span>{s}</span>;}
+function EvalBadge({e}){const t=EVALC[e]||EVALC["Bình thường"];return <span style={{background:t.bg,color:t.c}} className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold">{e}</span>;}
+function KBadge({s}){const t=KSTA[s];return <span style={{background:t.bg,color:t.c}} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"><span style={{background:t.dot}} className="w-1.5 h-1.5 rounded-full"></span>{s}</span>;}
+const Eyebrow=({children})=><div className="text-[11px] font-bold tracking-widest uppercase" style={{color:C.sub}}>{children}</div>;
+
+function DonutG({data,size=170,thick=24,center,sub}){const tot=data.reduce((a,d)=>a+d.value,0)||1;let off=0;const R=size/2-thick/2-2,CX=size/2,CY=size/2;
+ return(<svg viewBox={"0 0 "+size+" "+size} className="w-full" style={{maxHeight:size+6}}>
+  <g transform={"rotate(-90 "+CX+" "+CY+")"}>{data.map((d,i)=>{const pct=d.value/tot*100;const el=(<circle key={i} cx={CX} cy={CY} r={R} fill="none" stroke={d.color} strokeWidth={thick} pathLength="100" strokeDasharray={pct+" "+(100-pct)} strokeDashoffset={-off}/>);off+=pct;return el;})}</g>
+  <text x={CX} y={CY-2} textAnchor="middle" style={{fontSize:26,fontWeight:800,fill:C.navy,...MONO}}>{center!=null?center:tot}</text>
+  <text x={CX} y={CY+16} textAnchor="middle" style={{fontSize:10,fill:C.sub}}>{sub||""}</text></svg>);}
+
+function PctBar({v,color}){return <div className="h-2 rounded-full overflow-hidden" style={{background:"#eef2f7"}}><div style={{width:Math.max(0,Math.min(100,v))+"%",background:color||C.teal}} className="h-full transition-all"></div></div>;}
+
+/* ---- Login ---- */
+function Login({onLogin}){
+ const [u,setU]=useState("lanhdao"),[p,setP]=useState(""),[err,setErr]=useState("");
+ const submit=()=>{const a=ACCOUNTS[u];if(a&&a.pw===p){onLogin({username:u,...a});}else setErr("Sai tài khoản hoặc mật khẩu.");};
+ return(<div className="min-h-screen flex items-center justify-center p-4" style={{background:"linear-gradient(135deg,#14233f 0%,#1F3864 100%)"}}>
+  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-7">
+   <div className="text-center mb-5">
+    <div className="text-[11px] tracking-[0.2em] uppercase" style={{color:C.sub}}>CÔNG TY CỔ PHẦN ĐẦU TƯ THIÊN ÂN</div>
+    <h1 className="text-xl font-extrabold mt-1" style={{color:C.navy}}>Phần mềm Quản trị Công việc & Điều hành</h1>
+    <div className="text-xs mt-1" style={{color:C.sub}}>Đăng nhập để truy cập hệ thống</div>
+   </div>
+   <label className="text-xs font-semibold" style={{color:C.ink}}>Tài khoản</label>
+   <select value={u} onChange={e=>setU(e.target.value)} className="w-full mt-1 mb-3 border rounded-lg px-3 py-2 text-sm bg-white" style={{borderColor:C.line}}>
+    <option value="lanhdao">Ban Lãnh đạo (toàn công ty)</option>
+    {DEPTS.map(d=><option key={d.code} value={d.user}>{d.name}</option>)}
+   </select>
+   <label className="text-xs font-semibold" style={{color:C.ink}}>Mật khẩu</label>
+   <input type="password" value={p} onChange={e=>{setP(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&submit()}
+     className="w-full mt-1 border rounded-lg px-3 py-2 text-sm" style={{borderColor:C.line}} placeholder="Nhập mật khẩu"/>
+   {err&&<div className="text-red-600 text-xs mt-2 font-semibold">{err}</div>}
+   <button onClick={submit} className="w-full mt-4 text-white font-semibold rounded-lg py-2.5 text-sm" style={{background:C.navy2}}>Đăng nhập</button>
+   <div className="text-[11px] mt-4 p-2.5 rounded-lg" style={{background:"#f1f5f9",color:C.sub}}>
+    <b>Tài khoản demo:</b> Lãnh đạo <b>lanhdao</b> / <b>admin</b>. Phòng ban: chọn phòng, mật khẩu <b>123456</b>. Đổi mật khẩu khi triển khai thật.</div>
+  </div></div>);}
+
+/* ---- Work plan editor (department) ---- */
+function WorkPlanEditor({code,deptData,saveDept,toast,readOnly}){
+ const dept=deptByCode(code);
+ const src=(deptData[code]?deptData[code].tasks:[]);
+ const sig=deptData[code]?deptData[code].updatedAt:0;
+ const [rows,setRows]=useState(src.map(t=>({...t})));
+ const [dirty,setDirty]=useState(false);
+ useEffect(()=>{setRows((deptData[code]?deptData[code].tasks:[]).map(t=>({...t})));setDirty(false);},[code,sig]);
+ const fileRef=useRef();
+ const st=deptStats(rows);
+ const upd=(i,k,v)=>{setRows(rs=>rs.map((r,j)=>j===i?{...r,[k]:v}:r));setDirty(true);};
+ const add=()=>{setRows(rs=>[...rs,{id:"n"+Date.now(),noidung:"",muctieu:"",phutrach:"",phoihop:"",batdau:"",han:"",trangthai:"Chưa thực hiện",pct:0,ketqua:"",khokhan:"",dexuat:""}]);setDirty(true);};
+ const del=i=>{setRows(rs=>rs.filter((_,j)=>j!==i));setDirty(true);};
+ const save=async()=>{await saveDept(code,rows);setDirty(false);toast("Đã lưu công việc – "+dept.name);};
+ const onFile=f=>{const rd=new FileReader();rd.onload=e=>{try{const res=parseFile(e.target.result);let picked=null;for(const sn in res){if(matchDept(sn)===code){picked=res[sn];break;}}if(!picked){const ks=Object.keys(res);if(ks.length===1)picked=res[ks[0]];}if(!picked){toast("Không thấy dữ liệu công việc của phòng trong file. Hãy dùng đúng biểu mẫu (sheet '"+dept.sheet+"').",true);return;}setRows(picked);setDirty(true);toast("Đã nhập "+picked.length+" công việc từ Excel — bấm 'Lưu' để cập nhật.");}catch(err){toast("Lỗi đọc Excel: "+err.message,true);}};rd.readAsArrayBuffer(f);};
+ const donut=STATUSES.map(s=>({value:st[s],color:TASK_STA[s].dot}));
+ return(<div className="space-y-4">
+  <div className="flex flex-wrap items-center justify-between gap-3">
+   <div><Eyebrow>Kế hoạch & Báo cáo công việc</Eyebrow><h2 className="text-lg font-bold" style={{color:C.navy}}>{dept.name}</h2></div>
+   {!readOnly&&<div className="flex items-center gap-2">
+    <button onClick={()=>fileRef.current.click()} className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-md border px-2.5 py-1.5 bg-white hover:bg-slate-50" style={{borderColor:C.line}}>{IcUpload} Nhập Excel</button>
+    <button onClick={add} className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-md border px-2.5 py-1.5 bg-white hover:bg-slate-50" style={{borderColor:C.line}}>{IcPlus} Thêm việc</button>
+    <button onClick={save} className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-md px-3 py-1.5 text-white" style={{background:dirty?C.teal:"#94a3b8"}}>{IcSave} Lưu{dirty?" *":""}</button>
+    <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{if(e.target.files[0])onFile(e.target.files[0]);e.target.value="";}}/>
+   </div>}
+  </div>
+  <div className="grid sm:grid-cols-4 lg:grid-cols-7 gap-2">
+   <div className="bg-white rounded-xl border p-3" style={{borderColor:C.line}}><div className="text-[10px]" style={{color:C.sub}}>Tổng việc</div><div className="text-2xl font-extrabold" style={{color:C.navy,...MONO}}>{st.total}</div></div>
+   {STATUSES.map(s=>(<div key={s} className="bg-white rounded-xl border p-3" style={{borderColor:C.line}}><div className="text-[10px] leading-tight" style={{color:C.sub}}>{s}</div><div className="text-2xl font-extrabold" style={{color:TASK_STA[s].c,...MONO}}>{st[s]}</div></div>))}
+   <div className="bg-white rounded-xl border p-3" style={{borderColor:C.line}}><div className="text-[10px]" style={{color:C.sub}}>% hoàn thành TB</div><div className="text-2xl font-extrabold" style={{color:C.teal,...MONO}}>{st.pctAvg.toFixed(0)}%</div></div>
+  </div>
+  <div className="bg-white rounded-xl border overflow-hidden" style={{borderColor:C.line}}>
+   <div className="overflow-x-auto"><table className="w-full text-sm" style={{minWidth:880}}>
+    <thead><tr className="text-[11px] uppercase tracking-wide" style={{color:C.sub,background:"#f8fafc"}}>
+     <th className="text-left font-semibold px-2 py-2 w-8">#</th>
+     <th className="text-left font-semibold px-2 py-2" style={{minWidth:230}}>Nội dung công việc</th>
+     <th className="text-left font-semibold px-2 py-2">Người phụ trách</th>
+     <th className="text-left font-semibold px-2 py-2">Hạn</th>
+     <th className="text-left font-semibold px-2 py-2">Trạng thái</th>
+     <th className="text-left font-semibold px-2 py-2 w-16">%</th>
+     <th className="text-left font-semibold px-2 py-2" style={{minWidth:180}}>Kết quả / Ghi chú</th>
+     {!readOnly&&<th className="px-2 py-2 w-8"></th>}</tr></thead>
+    <tbody>{rows.map((r,i)=>{const t=TASK_STA[r.trangthai]||TASK_STA["Chưa thực hiện"];
+     return(<tr key={r.id||i} className="border-t align-top" style={{borderColor:C.line}}>
+      <td className="px-2 py-1.5 text-center" style={{color:C.sub,...MONO}}>{i+1}</td>
+      <td className="px-2 py-1.5">{readOnly?<span>{r.noidung}</span>:<input value={r.noidung} onChange={e=>upd(i,"noidung",e.target.value)} className="w-full border rounded px-1.5 py-1 text-[13px]" style={{borderColor:C.line}}/>}</td>
+      <td className="px-2 py-1.5">{readOnly?<span>{r.phutrach}</span>:<input value={r.phutrach} onChange={e=>upd(i,"phutrach",e.target.value)} className="w-full border rounded px-1.5 py-1 text-[13px]" style={{borderColor:C.line}}/>}</td>
+      <td className="px-2 py-1.5">{readOnly?<span>{r.han}</span>:<input value={r.han} onChange={e=>upd(i,"han",e.target.value)} className="w-24 border rounded px-1.5 py-1 text-[13px]" style={{borderColor:C.line}}/>}</td>
+      <td className="px-2 py-1.5">{readOnly?<TaskBadge s={r.trangthai}/>:<select value={r.trangthai} onChange={e=>upd(i,"trangthai",e.target.value)} className="border rounded px-1 py-1 text-[12px] font-semibold" style={{borderColor:C.line,background:t.bg,color:t.c}}>{STATUSES.map(s=><option key={s} value={s}>{s}</option>)}</select>}</td>
+      <td className="px-2 py-1.5">{readOnly?<span className="mono">{r.pct}%</span>:<input type="number" min="0" max="100" value={r.pct} onChange={e=>upd(i,"pct",Number(e.target.value)||0)} className="w-14 border rounded px-1.5 py-1 text-[13px] text-right" style={{borderColor:C.line,...MONO}}/>}<div className="mt-1"><PctBar v={r.pct} color={t.dot}/></div></td>
+      <td className="px-2 py-1.5">{readOnly?<span>{r.ketqua}</span>:<input value={r.ketqua} onChange={e=>upd(i,"ketqua",e.target.value)} className="w-full border rounded px-1.5 py-1 text-[13px]" style={{borderColor:C.line}}/>}</td>
+      {!readOnly&&<td className="px-2 py-1.5 text-center"><button onClick={()=>del(i)} style={{color:"#ef4444"}} title="Xóa">{IcTrash}</button></td>}
+     </tr>);})}
+     {rows.length===0&&<tr><td colSpan={readOnly?7:8} className="text-center py-6 text-sm" style={{color:C.sub}}>Chưa có công việc. {readOnly?"":"Bấm 'Thêm việc' hoặc 'Nhập Excel'."}</td></tr>}
+    </tbody></table></div>
+  </div>
+  {deptData[code]&&deptData[code].updatedBy&&<div className="text-[11px]" style={{color:C.sub}}>Cập nhật gần nhất bởi: {deptData[code].updatedBy}</div>}
+ </div>);}
+
+/* ---- Company overview (admin) ---- */
+function CompanyOverview({deptData,go,adminImport,toast}){
+ const fileRef=useRef();
+ const per=DEPTS.map(d=>{const t=deptData[d.code]?deptData[d.code].tasks:[];return {...d,...deptStats(t),updatedBy:deptData[d.code]&&deptData[d.code].updatedBy};});
+ const tot={total:0};STATUSES.forEach(s=>tot[s]=0);let psum=0,pn=0;
+ per.forEach(p=>{tot.total+=p.total;STATUSES.forEach(s=>tot[s]+=p[s]);psum+=p.pctAvg*p.total;pn+=p.total;});
+ const overallPct=pn?psum/pn:0;
+ const donut=STATUSES.map(s=>({value:tot[s],color:TASK_STA[s].dot}));
+ const onFile=f=>{const rd=new FileReader();rd.onload=async e=>{try{const res=parseFile(e.target.result);let n=0,depts=0;for(const sn in res){const code=matchDept(sn);if(code){await adminImport(code,res[sn]);n+=res[sn].length;depts++;}}if(depts===0)toast("Không nhận diện được phòng ban nào trong file. Hãy dùng file biểu mẫu của hệ thống.",true);else toast("Đã nhập "+n+" công việc cho "+depts+" phòng ban.");}catch(err){toast("Lỗi đọc Excel: "+err.message,true);}};rd.readAsArrayBuffer(f);};
+ return(<div className="space-y-5">
+  <div className="flex flex-wrap items-center justify-between gap-3">
+   <div><Eyebrow>Tổng quan toàn công ty</Eyebrow><h2 className="text-lg font-bold" style={{color:C.navy}}>Tiến độ công việc 13 phòng ban</h2></div>
+   <button onClick={()=>fileRef.current.click()} className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-md border px-2.5 py-1.5 bg-white hover:bg-slate-50" style={{borderColor:C.line}}>{IcUpload} Nhập Excel (toàn công ty)</button>
+   <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e=>{if(e.target.files[0])onFile(e.target.files[0]);e.target.value="";}}/>
+  </div>
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+   {[["Tổng công việc",tot.total,C.navy2],["Hoàn thành",tot["Hoàn thành"],TASK_STA["Hoàn thành"].c],["Đang thực hiện",tot["Đang thực hiện"],TASK_STA["Đang thực hiện"].c],["Quá hạn",tot["Quá hạn"],TASK_STA["Quá hạn"].c]].map((c,i)=>(
+    <div key={i} className="bg-white rounded-xl border p-4" style={{borderColor:C.line}}><Eyebrow>{c[0]}</Eyebrow><div className="text-3xl font-extrabold mt-2" style={{color:c[2],...MONO}}>{c[1]}</div></div>))}
+  </div>
+  <div className="grid lg:grid-cols-5 gap-4">
+   <div className="bg-white rounded-xl border p-4 lg:col-span-2" style={{borderColor:C.line}}>
+    <Eyebrow>Phân bố trạng thái công việc</Eyebrow>
+    <DonutG data={donut} center={overallPct.toFixed(0)+"%"} sub="hoàn thành TB"/>
+    <div className="grid grid-cols-2 gap-1.5 mt-2 text-[11px]">{STATUSES.map(s=>(<span key={s} className="inline-flex items-center gap-1.5"><span style={{background:TASK_STA[s].dot}} className="w-2.5 h-2.5 rounded-full"></span>{s}: <b className="mono">{tot[s]}</b></span>))}</div>
+   </div>
+   <div className="bg-white rounded-xl border p-4 lg:col-span-3" style={{borderColor:C.line}}>
+    <Eyebrow>% hoàn thành theo phòng ban</Eyebrow>
+    <div className="space-y-2 mt-3">{per.map(p=>(<div key={p.code} className="flex items-center gap-2"><div className="w-20 text-[11px] truncate" style={{color:C.ink}} title={p.name}>{p.short}</div><div className="flex-1"><PctBar v={p.pctAvg} color={EVALC[p.eval].c}/></div><div className="mono text-[11px] w-9 text-right" style={{color:C.sub}}>{p.pctAvg.toFixed(0)}%</div></div>))}</div>
+   </div>
+  </div>
+  <div className="bg-white rounded-xl border" style={{borderColor:C.line}}>
+   <div className="px-4 py-3 border-b" style={{borderColor:C.line}}><Eyebrow>Chi tiết theo phòng ban — bấm để xem công việc</Eyebrow></div>
+   <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-[11px] uppercase tracking-wide" style={{color:C.sub}}>
+     <th className="text-left font-semibold px-4 py-2">Phòng ban</th><th className="text-center font-semibold px-2 py-2">Tổng</th>
+     <th className="text-center font-semibold px-2 py-2">Hoàn thành</th><th className="text-center font-semibold px-2 py-2">Đang TH</th>
+     <th className="text-center font-semibold px-2 py-2">Chưa TH</th><th className="text-center font-semibold px-2 py-2">Quá hạn</th>
+     <th className="text-center font-semibold px-2 py-2 w-28">% HT TB</th><th className="text-center font-semibold px-3 py-2">Đánh giá</th></tr></thead>
+    <tbody>{per.map(p=>(<tr key={p.code} onClick={()=>go(p.code)} className="border-t cursor-pointer hover:bg-slate-50" style={{borderColor:C.line}}>
+     <td className="px-4 py-2.5 font-semibold" style={{color:C.ink}}>{p.name}</td>
+     <td className="px-2 py-2.5 text-center mono">{p.total}</td>
+     <td className="px-2 py-2.5 text-center mono" style={{color:TASK_STA["Hoàn thành"].c}}>{p["Hoàn thành"]}</td>
+     <td className="px-2 py-2.5 text-center mono" style={{color:TASK_STA["Đang thực hiện"].c}}>{p["Đang thực hiện"]}</td>
+     <td className="px-2 py-2.5 text-center mono" style={{color:TASK_STA["Chưa thực hiện"].c}}>{p["Chưa thực hiện"]}</td>
+     <td className="px-2 py-2.5 text-center mono font-bold" style={{color:TASK_STA["Quá hạn"].c}}>{p["Quá hạn"]}</td>
+     <td className="px-2 py-2.5"><div className="flex items-center gap-2"><div className="flex-1"><PctBar v={p.pctAvg} color={EVALC[p.eval].c}/></div><span className="mono text-[11px]" style={{color:C.sub}}>{p.pctAvg.toFixed(0)}%</span></div></td>
+     <td className="px-3 py-2.5 text-center"><EvalBadge e={p.eval}/></td></tr>))}</tbody></table></div>
+  </div>
+ </div>);}
+
+/* ---- KPI module ---- */
+function kpiAgg(kpiVals){let g=0,y=0,r=0;const per=KPIDEPTS.map(d=>{const ks=computeKpis(d,kpiVals[d.code]);const cD=ks.filter(k=>k.status==="ĐỎ").length,cY=ks.filter(k=>k.status==="VÀNG").length,cG=ks.filter(k=>k.status==="XANH").length;g+=cG;y+=cY;r+=cD;return{code:d.code,name:d.name,short:d.short,cD,cY,cG,overall:rollup(ks.map(k=>k.status)),score:ks.reduce((a,k)=>a+k.score,0)/ks.length};});return{g,y,r,per};}
+function KpiCard({r}){const t=KSTA[r.status];return(<div className="bg-white rounded-xl border p-3" style={{borderColor:C.line}}>
+ <div className="flex items-start justify-between gap-2"><span className="text-[12px] font-medium leading-tight" style={{color:C.ink}}>{r.label}</span><KBadge s={r.status}/></div>
+ <div className="flex items-end justify-between mt-1.5"><div className="text-xl font-extrabold" style={{color:t.c,...MONO}}>{fmtVal(r.val,r.fmt)}</div><div className="text-[10px] text-right" style={{color:C.sub}}>🟢 {fmtVal(r.good,r.fmt)} · 🔴 {fmtVal(r.bad,r.fmt)}</div></div>
+ <div className="mt-1.5"><PctBar v={r.score} color={t.dot}/></div></div>);}
+function KpiDeptView({code,kpiVals,setKpi,editable}){const d=kpiDeptByCode(code);const vals=kpiVals[code];const res=computeKpis(d,vals);
+ return(<div className="grid lg:grid-cols-5 gap-4">
+  <div className="bg-white rounded-xl border p-4 lg:col-span-2" style={{borderColor:C.line}}>
+   <Eyebrow>Số liệu KPI</Eyebrow><h3 className="font-bold mb-1" style={{color:C.navy}}>{d.name}</h3>
+   <div className="divide-y" style={{borderColor:C.line}}>{d.inputs.map(([id,label,unit])=>(<label key={id} className="flex items-center justify-between gap-2 py-1.5"><span className="text-[13px]" style={{color:C.ink}}>{label}</span><span className="flex items-center gap-1"><input type="number" disabled={!editable} value={vals[id]} onChange={e=>setKpi(code,id,e.target.value===""?0:parseFloat(e.target.value))} className="w-24 text-right text-[13px] font-semibold rounded-md border px-2 py-1" style={{borderColor:C.line,...MONO,background:editable?"#fff":"#f8fafc"}}/><span className="text-[11px] w-10" style={{color:C.sub}}>{unit}</span></span></label>))}</div>
+  </div>
+  <div className="lg:col-span-3 grid sm:grid-cols-2 gap-3 content-start">{res.map((r,i)=><KpiCard key={i} r={r}/>)}</div>
+ </div>);}
+function KpiOverview({kpiVals,go}){const a=kpiAgg(kpiVals);const donut=[{value:a.g,color:KSTA["XANH"].dot},{value:a.y,color:KSTA["VÀNG"].dot},{value:a.r,color:KSTA["ĐỎ"].dot}];
+ return(<div className="space-y-4">
+  <div><Eyebrow>Chỉ số quản trị (KPI)</Eyebrow><h2 className="text-lg font-bold" style={{color:C.navy}}>Sức khỏe KPI 13 phòng ban</h2></div>
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[["Tổng KPI",a.g+a.y+a.r,C.navy2],["Xanh",a.g,KSTA["XANH"].c],["Vàng",a.y,KSTA["VÀNG"].c],["Đỏ",a.r,KSTA["ĐỎ"].c]].map((c,i)=>(<div key={i} className="bg-white rounded-xl border p-4" style={{borderColor:C.line}}><Eyebrow>{c[0]}</Eyebrow><div className="text-3xl font-extrabold mt-2" style={{color:c[2],...MONO}}>{c[1]}</div></div>))}</div>
+  <div className="grid lg:grid-cols-5 gap-4">
+   <div className="bg-white rounded-xl border p-4 lg:col-span-2" style={{borderColor:C.line}}><Eyebrow>Phân bố trạng thái KPI</Eyebrow><DonutG data={donut} sub="KPI"/></div>
+   <div className="bg-white rounded-xl border p-4 lg:col-span-3" style={{borderColor:C.line}}><Eyebrow>Sức khỏe theo phòng ban — bấm để xem chi tiết</Eyebrow>
+    <div className="space-y-1.5 mt-3">{a.per.map(p=>(<div key={p.code} onClick={()=>go(p.code)} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-1 py-0.5"><div className="w-20 text-[11px] truncate" style={{color:C.ink}}>{p.short}</div><div className="flex-1 h-4 rounded overflow-hidden flex" style={{background:"#f1f5f9"}}>{p.cD>0&&<div style={{width:p.cD/(p.cD+p.cY+p.cG)*100+"%",background:KSTA["ĐỎ"].dot}}></div>}{p.cY>0&&<div style={{width:p.cY/(p.cD+p.cY+p.cG)*100+"%",background:KSTA["VÀNG"].dot}}></div>}{p.cG>0&&<div style={{width:p.cG/(p.cD+p.cY+p.cG)*100+"%",background:KSTA["XANH"].dot}}></div>}</div><KBadge s={p.overall}/></div>))}</div>
+   </div>
+  </div>
+ </div>);}
+
+/* ---- Projects (EVM) ---- */
+function EvmChart({pv,ev,ac,eac,bac}){const W=360,H=190,pad=30,base=H-24,top=12;const max=Math.max(pv,ev,ac,eac,bac,1)*1.12;const bars=[["PV",pv,"#94a3b8"],["EV",ev,C.teal],["AC",ac,C.navy2],["EAC",eac,KSTA["VÀNG"].dot]];const bw=46,gap=(W-pad*2-bw*bars.length)/(bars.length-1);const yOf=v=>top+(1-v/max)*(base-top);const bacY=yOf(bac);
+ return(<svg viewBox={"0 0 "+W+" "+H} className="w-full" style={{maxHeight:230}}>
+  {[0,.25,.5,.75,1].map((f,i)=>{const yy=top+(1-f)*(base-top);return(<g key={i}><line x1={pad} y1={yy} x2={W-pad} y2={yy} stroke="#eef2f7"/><text x={pad-4} y={yy+3} textAnchor="end" style={{fontSize:8,fill:C.sub}}>{Math.round(max*f)}</text></g>);})}
+  {bars.map(([n,val,col],i)=>{const x=pad+i*(bw+gap);const yy=yOf(val);return(<g key={i}><rect x={x} y={yy} width={bw} height={base-yy} rx="3" fill={col}/><text x={x+bw/2} y={yy-4} textAnchor="middle" style={{fontSize:10,fontWeight:700,fill:C.ink,...MONO}}>{fmtN(val)}</text><text x={x+bw/2} y={base+13} textAnchor="middle" style={{fontSize:11,fontWeight:600,fill:C.ink}}>{n}</text></g>);})}
+  <line x1={pad} y1={bacY} x2={W-pad} y2={bacY} stroke={KSTA["ĐỎ"].c} strokeWidth="1.5" strokeDasharray="5 4"/><text x={W-pad} y={bacY-4} textAnchor="end" style={{fontSize:9,fontWeight:700,fill:KSTA["ĐỎ"].c}}>BAC {fmtN(bac)}</text></svg>);}
+function ProjectsModule({projVals,setProj,editable}){const [sel,setSel]=useState(PROJECTS[0].code);const meta=PROJECTS.find(p=>p.code===sel);const vals=projVals[sel];const ext={...vals,...PRJ_DERIVE(vals)};
+ const res=PRJ_KPIS.map(k=>{let v=k.calc(ext);if(!isFinite(v))v=0;return{...k,val:v,status:statusOf(v,k.good,k.bad,k.dir),score:scoreOf(v,k.good,k.bad,k.dir)};});
+ const portfolio=PROJECTS.map(p=>{const e={...projVals[p.code],...PRJ_DERIVE(projVals[p.code])};const ks=PRJ_KPIS.map(k=>statusOf(k.calc(e),k.good,k.bad,k.dir));return{code:p.code,name:p.name,role:p.role,spi:projVals[p.code].ev/projVals[p.code].pv,cpi:projVals[p.code].ev/projVals[p.code].ac,overall:rollup(ks)};});
+ return(<div className="space-y-4">
+  <div><Eyebrow>Quản trị dự án (EVM)</Eyebrow><h2 className="text-lg font-bold" style={{color:C.navy}}>Danh mục dự án</h2></div>
+  <div className="flex flex-wrap gap-2">{PROJECTS.map(p=><button key={p.code} onClick={()=>setSel(p.code)} style={p.code===sel?{background:C.teal,color:"#fff",borderColor:C.teal}:{borderColor:C.line,color:C.ink}} className="text-xs font-semibold rounded-full border bg-white px-3 py-1.5">{p.name}</button>)}</div>
+  <div className="grid lg:grid-cols-5 gap-4">
+   <div className="bg-white rounded-xl border p-4 lg:col-span-2" style={{borderColor:C.line}}>
+    <Eyebrow>{meta.role}</Eyebrow><h3 className="font-bold mb-1" style={{color:C.navy}}>{meta.name}</h3>
+    <div className="grid grid-cols-2 gap-x-3">{PRJ_INPUTS.map(([gid,gn,fs])=>fs.map(([id,label,unit])=>(<label key={id} className="flex items-center justify-between gap-1 py-1"><span className="text-[12px]" style={{color:C.ink}}>{label}</span><input type="number" disabled={!editable} value={vals[id]} onChange={e=>setProj(sel,id,e.target.value===""?0:parseFloat(e.target.value))} className="w-16 text-right text-[12px] font-semibold rounded border px-1 py-0.5" style={{borderColor:C.line,...MONO,background:editable?"#fff":"#f8fafc"}}/></label>)))}</div>
+   </div>
+   <div className="lg:col-span-3 space-y-3">
+    <div className="bg-white rounded-xl border p-4" style={{borderColor:C.line}}><Eyebrow>Phân tích giá trị thực hiện (EVM)</Eyebrow><div className="mt-2"><EvmChart pv={vals.pv} ev={vals.ev} ac={vals.ac} eac={ext.eac} bac={vals.bac}/></div></div>
+    <div className="grid sm:grid-cols-2 gap-2">{res.slice(0,6).map((r,i)=><KpiCard key={i} r={r}/>)}</div>
+   </div>
+  </div>
+  <div className="bg-white rounded-xl border" style={{borderColor:C.line}}><div className="px-4 py-3 border-b" style={{borderColor:C.line}}><Eyebrow>Danh mục dự án</Eyebrow></div>
+   <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-[11px] uppercase" style={{color:C.sub}}><th className="text-left font-semibold px-4 py-2">Dự án</th><th className="text-left font-semibold px-4 py-2">Vai trò</th><th className="text-right font-semibold px-4 py-2">SPI</th><th className="text-right font-semibold px-4 py-2">CPI</th><th className="text-center font-semibold px-4 py-2">Trạng thái</th></tr></thead>
+    <tbody>{portfolio.map(p=>(<tr key={p.code} onClick={()=>setSel(p.code)} className="border-t cursor-pointer hover:bg-slate-50" style={{borderColor:C.line}}><td className="px-4 py-2 font-semibold" style={{color:C.ink}}>{p.name}</td><td className="px-4 py-2 text-[12px]" style={{color:C.sub}}>{p.role}</td><td className="px-4 py-2 text-right font-semibold mono" style={{color:p.spi<0.9?KSTA["ĐỎ"].c:p.spi<1?KSTA["VÀNG"].c:KSTA["XANH"].c}}>{p.spi.toFixed(2)}</td><td className="px-4 py-2 text-right font-semibold mono" style={{color:p.cpi<0.95?KSTA["ĐỎ"].c:p.cpi<1?KSTA["VÀNG"].c:KSTA["XANH"].c}}>{p.cpi.toFixed(2)}</td><td className="px-4 py-2 text-center"><KBadge s={p.overall}/></td></tr>))}</tbody></table></div>
+  </div>
+ </div>);}
+
+/* ---- App shell ---- */
+function App(){
+ const [user,setUser]=useState(null);
+ const [deptData,setDeptData]=useState(null);
+ const [tab,setTab]=useState("overview");
+ const [selDept,setSelDept]=useState(null);
+ const [toastMsg,setToastMsg]=useState(null),[toastErr,setToastErr]=useState(false);
+ const toast=(m,e)=>{setToastErr(!!e);setToastMsg(m);clearTimeout(window.__tt);window.__tt=setTimeout(()=>setToastMsg(null),3800);};
+ const [kpiVals,setKpiVals]=useState(()=>{const o={};KPIDEPTS.forEach(d=>{o[d.code]={};d.inputs.forEach(([id,a,b,def])=>o[d.code][id]=def);});return o;});
+ const [projVals,setProjVals]=useState(()=>{const o={};PROJECTS.forEach(p=>o[p.code]={...p.vals});return o;});
+ const setKpi=(c,id,v)=>setKpiVals(s=>({...s,[c]:{...s[c],[id]:v}}));
+ const setProj=(c,id,v)=>setProjVals(s=>({...s,[c]:{...s[c],[id]:v}}));
+
+ useEffect(()=>{if(user&&!deptData)loadAll();},[user]);
+ async function loadAll(){const data={};for(const d of DEPTS){let raw=await sget("wpr:dept:"+d.code);if(raw){try{data[d.code]=JSON.parse(raw);}catch(e){data[d.code]={code:d.code,tasks:[],updatedAt:0,updatedBy:""};}}else{const obj={code:d.code,tasks:(TASKS_DEFAULT[d.code]||[]).map((t,i)=>({id:"s"+d.code+i,muctieu:"",phutrach:"",phoihop:"",batdau:"",han:"",ketqua:"",khokhan:"",dexuat:"",...t})),updatedAt:Date.now(),updatedBy:"(dữ liệu mẫu)"};await sset("wpr:dept:"+d.code,JSON.stringify(obj));data[d.code]=obj;}}setDeptData(data);}
+ async function saveDept(code,tasks){const obj={code,tasks,updatedAt:Date.now(),updatedBy:user.name};await sset("wpr:dept:"+code,JSON.stringify(obj));setDeptData(s=>({...s,[code]:obj}));}
+ async function adminImport(code,tasks){await saveDept(code,tasks);}
+
+ if(!user)return <Login onLogin={u=>{setUser(u);setTab(u.role==="admin"?"overview":"work");}}/>;
+ if(!deptData)return <div className="min-h-screen flex items-center justify-center" style={{color:C.sub}}>Đang tải dữ liệu…</div>;
+
+ const isAdmin=user.role==="admin";
+ const tabs=isAdmin?[["overview","Tổng quan",IcGrid],["deptwork","Công việc phòng ban",IcList],["kpi","Chỉ số KPI",IcGauge],["projects","Dự án (EVM)",IcFolder]]
+                   :[["work","Công việc của phòng",IcList],["mykpi","Chỉ số KPI phòng",IcGauge]];
+ return(<div style={{background:C.page,minHeight:"100%"}}>
+  <header style={{background:C.navy}} className="text-white">
+   <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3">
+    <div className="flex items-center justify-between gap-3 flex-wrap">
+     <div><div className="text-[10px] tracking-[0.18em] uppercase" style={{color:"#9fb3d1"}}>CÔNG TY CỔ PHẦN ĐẦU TƯ THIÊN ÂN</div><h1 className="text-base sm:text-lg font-bold">Phần mềm Quản trị Công việc & Điều hành</h1></div>
+     <div className="flex items-center gap-2 text-xs">
+      <span className="hidden sm:inline px-2 py-1 rounded" style={{background:"rgba(255,255,255,0.08)",color:"#cbd5e1"}}>{STORAGE_LABEL}</span>
+      <span className="px-2.5 py-1 rounded-md font-semibold" style={{background:"rgba(255,255,255,0.12)"}}>{isAdmin?"👑 ":"🏢 "}{user.name}</span>
+      <button onClick={()=>{setUser(null);setDeptData(null);}} className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-semibold bg-white/10 hover:bg-white/20">{IcOut} Thoát</button>
+     </div>
+    </div>
+    <nav className="flex gap-1 mt-3 flex-wrap">{tabs.map(([id,lab,ic])=>(<button key={id} onClick={()=>setTab(id)} style={{background:tab===id?C.page:"transparent",color:tab===id?C.navy:"#cdd9ec"}} className={"inline-flex items-center gap-2 text-sm font-semibold rounded-t-lg px-4 py-2.5 "+(tab===id?"":"hover:bg-white/10")}>{ic}{lab}</button>))}</nav>
+   </div>
+  </header>
+  <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+   {isAdmin&&tab==="overview"&&<CompanyOverview deptData={deptData} adminImport={adminImport} toast={toast} go={c=>{setSelDept(c);setTab("deptwork");}}/>}
+   {isAdmin&&tab==="deptwork"&&(<div className="space-y-4"><div className="flex flex-wrap gap-2">{DEPTS.map(d=><button key={d.code} onClick={()=>setSelDept(d.code)} style={(selDept||DEPTS[0].code)===d.code?{background:C.navy2,color:"#fff",borderColor:C.navy2}:{borderColor:C.line,color:C.ink}} className="text-xs font-semibold rounded-full border bg-white px-3 py-1.5">{d.short}</button>)}</div><WorkPlanEditor code={selDept||DEPTS[0].code} deptData={deptData} saveDept={saveDept} toast={toast} readOnly={true}/></div>)}
+   {isAdmin&&tab==="kpi"&&(selDept?<div className="space-y-3"><button onClick={()=>setSelDept(null)} className="text-sm font-semibold" style={{color:C.teal}}>← Quay lại tổng quan KPI</button><KpiDeptView code={selDept} kpiVals={kpiVals} setKpi={setKpi} editable={true}/></div>:<KpiOverview kpiVals={kpiVals} go={c=>setSelDept(c)}/>)}
+   {isAdmin&&tab==="projects"&&<ProjectsModule projVals={projVals} setProj={setProj} editable={true}/>}
+   {!isAdmin&&tab==="work"&&<WorkPlanEditor code={user.code} deptData={deptData} saveDept={saveDept} toast={toast} readOnly={false}/>}
+   {!isAdmin&&tab==="mykpi"&&<KpiDeptView code={user.code} kpiVals={kpiVals} setKpi={setKpi} editable={true}/>}
+   <footer className="mt-8 text-[11px]" style={{color:C.sub}}>Dữ liệu công việc được lưu ở: <b>{STORAGE_LABEL}</b>. Dữ liệu khởi tạo là mẫu — các phòng nhập/cập nhật để thay thế. KPI & Dự án là khu phân tích (theo phiên).</footer>
+  </main>
+  {toastMsg&&<div className="fixed left-1/2 bottom-5 -translate-x-1/2 z-50 text-sm font-semibold rounded-lg px-4 py-2.5 shadow-lg" style={{background:toastErr?"#7f1d1d":C.navy,color:"#fff",maxWidth:"90vw"}}>{toastMsg}</div>}
+ </div>);}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+
+</script>
+</body>
+</html>
